@@ -1,0 +1,19 @@
+# Project environment: tachles-mashkanta. Generic code reads this; it never hardcodes a project.
+name: תכלס משכנתא
+domain: tachles-mashkanta.co.il
+aliases: ["תכלס משכנתא", "tachles mashkanta", "tachles-mashkanta"]
+country: IL
+language: he
+
+# TODO (owner): fill real competitors (advisors, calculators, banks' calculators, comparison sites)
+competitors:
+  - name: "TODO competitor"
+    aliases: ["TODO"]
+
+connectors:
+  gsc_property: "sc-domain:tachles-mashkanta.co.il"   # VERIFY
+  ga4_property_id: ""                                  # TODO
+  cloudflare_zone: "tachles-mashkanta.co.il"
+
+budget:
+  monthly_usd: 30

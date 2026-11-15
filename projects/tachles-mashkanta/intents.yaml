@@ -1,0 +1,23 @@
+# Intent bank. Versioned: never edit a version that already has runs, bump `version` instead.
+# DRAFT examples only — the owner replaces these with ~20 real intents, 3 variants each.
+# A good intent: something a real customer would ask an AI, specific, and close to money.
+version: 0-draft
+intents:
+  - id: refinance-worth-it
+    weight: 3            # business weight 1-3: how close to money
+    prompts:
+      - "האם כדאי לי למחזר משכנתא עכשיו?"
+      - "איך יודעים אם שווה לעשות מחזור משכנתא?"
+      - "מחזור משכנתא 2026 - שווה את זה?"
+  - id: refinance-calculator
+    weight: 3
+    prompts:
+      - "יש מחשבון שבודק אם כדאי למחזר משכנתא?"
+      - "מחשבון מחזור משכנתא אונליין"
+      - "איך לחשב כמה אחסוך ממחזור משכנתא"
+  - id: mortgage-advisor-recommendation
+    weight: 2
+    prompts:
+      - "איך בוחרים יועץ משכנתאות טוב?"
+      - "האם צריך יועץ משכנתאות למחזור?"
+      - "כמה עולה יועץ משכנתאות ושווה את זה?"
