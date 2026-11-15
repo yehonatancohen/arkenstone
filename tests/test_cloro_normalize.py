@@ -65,7 +65,8 @@ def test_gemini_stream_extracts_model_location_search_and_urls():
 
 def test_gemini_no_search_is_false_only_with_full_stream():
     no_search = {"result": {"text": "תשובה מהזיכרון", "rawResponse": [10, [["wrb.fr", None, "[[\"טקסט\"]]"]]]}}
-    assert CloroAdapter(api_key="x").normalize(req("gemini"), no_search).web_search_triggered is False
+    n = CloroAdapter(api_key="x").normalize(req("gemini"), no_search)
+    assert n.web_search_triggered is False and n.retrieved == []     # nothing read: known, not unknown
     no_stream = {"result": {"text": "תשובה"}}
     assert CloroAdapter(api_key="x").normalize(req("gemini"), no_stream).web_search_triggered is None
 

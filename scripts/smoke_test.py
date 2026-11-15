@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from geo.core import db  # noqa: E402
 from geo.core.schema import RunRequest  # noqa: E402
 from geo.estimator.rates import runs_for_mde, wilson  # noqa: E402
-from geo.orchestrator.run import tick  # noqa: E402
+from geo.orchestrator.run import run_until_done  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 HEBREW = re.compile(r"[֐-׿]")
@@ -121,7 +121,7 @@ def main():
             "intents_file": args.intents, "intent_version": str(intents.get("version"))})
         n = plan(conn, args.project, cfg, intents, args.provider, args.engine, args.reps, args.limit, batch_id)
         print(f"batch {batch_id}: planned {n} runs")
-        print(tick(conn, cfg, args.project, batch_id, workers=args.workers))
+        print(run_until_done(conn, cfg, args.project, batch_id, workers=args.workers))
     summarize(conn, args.project, cfg, batch_id)
 
 

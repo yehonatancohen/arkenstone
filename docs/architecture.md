@@ -26,7 +26,8 @@ planned → submitted → collected → parsed → scored
 - `submitted` is a claim taken before the provider is called, so no run is paid for twice. A run stuck in
   `submitted` (crash mid-call) is released after 15 minutes (`db.release_stale`).
 - `failed` runs are retried up to 3 attempts; permanent errors (bad request, no credits) are not retried.
-- Async providers will return a task id at `submitted`; the orchestrator then polls until `collected`.
+- Async providers (cloro default): submit stores the task id at `submitted`, `poll_submitted` moves it to
+  `collected`. `run_until_done()` ticks until a batch has nothing planned or submitted.
 - Re-parsing old data = move runs back to `collected` (mentions/citations are replaced, never duplicated).
 - Every run belongs to a **batch** (one planned set with fixed parameters, stored in `batch.params_json`).
   Metrics are computed per batch, never across batches.
@@ -58,6 +59,8 @@ A run = prompt × engine × surface × country × language × time × provider.
 | `mention` | alias match in answer text | our own detection, project aliases |
 
 The diagnostic chain per run: searched? → target read (retrieval)? → target cited? → target named?
+Report: `python scripts/report.py --project <p> --batch <id>` (`geo/report/funnel.py`), rates with intervals,
+unknown stages shown as unknown, a warning when batches with different settings are combined.
 
 ## Metrics (V0)
 

@@ -153,7 +153,7 @@ def test_crash_mid_call_is_recovered(conn):
     (rid,) = plan(conn, b, [PROMPT])
     assert db.claim(conn, rid)                        # worker claimed it, then died before writing
     assert not db.claim(conn, rid)                    # nobody else can take it meanwhile
-    assert collect_planned(conn, "t", b) == {"collected": 0, "failed": 0}
+    assert collect_planned(conn, "t", b) == {"collected": 0, "submitted": 0, "failed": 0}
     assert db.release_stale(conn, minutes=15) == 0    # not stale yet
     conn.execute("UPDATE run SET submitted_at = datetime('now', '-20 minutes') WHERE id = ?", (rid,))
     conn.commit()
@@ -179,7 +179,7 @@ def test_parallel_collection_claims_each_run_once(conn):
     t0 = time.monotonic()
     out = collect_planned(conn, "t", b, workers=6)
     elapsed = time.monotonic() - t0
-    assert out == {"collected": 12, "failed": 0}
+    assert out == {"collected": 12, "submitted": 0, "failed": 0}
     assert sorted(FakeAdapter.calls) == sorted(prompts)   # each run called exactly once
     assert elapsed < 12 * 0.2 / 2                         # really ran in parallel
 
@@ -197,3 +197,92 @@ def test_migration_adds_columns_to_old_database(tmp_path):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(run)")}
     assert set(db.RUN_COLUMNS) <= cols
     assert conn.execute("SELECT attempts FROM run WHERE id = 'r1'").fetchone()[0] == 0
+
+
+# ---------------- async providers (submit + poll) ----------------
+
+class FakeAsync(FakeAdapter):
+    """Server side: tasks by id, keyed by idempotency key; each task completes after `ready_after` polls."""
+    name = "fakeasync"
+    tasks: dict[str, dict] = {}
+    by_key: dict[str, str] = {}
+    submits: list[str] = []
+    ready_after = 1
+    fail_tasks: set[str] = set()
+
+    def submit(self, req, idempotency_key, **params):
+        FakeAsync.submits.append(idempotency_key)
+        if idempotency_key in FakeAsync.by_key:          # like cloro's 409 + taskId
+            return FakeAsync.by_key[idempotency_key]
+        tid = f"task-{len(FakeAsync.tasks) + 1}"
+        FakeAsync.tasks[tid] = {"polls": 0, "req": req, "paid": True}
+        FakeAsync.by_key[idempotency_key] = tid
+        return tid
+
+    def poll(self, task_id, req):
+        t = FakeAsync.tasks[task_id]
+        t["polls"] += 1
+        if t["polls"] <= FakeAsync.ready_after:
+            return None
+        if task_id in FakeAsync.fail_tasks:
+            raise ProviderError(f"task {task_id} FAILED", code="FAILED")
+        return self.collect(req)
+
+
+@pytest.fixture
+def fake_async(monkeypatch):
+    monkeypatch.setitem(adapters.REGISTRY, "fakeasync", FakeAsync)
+    FakeAsync.tasks, FakeAsync.by_key, FakeAsync.submits, FakeAsync.fail_tasks = {}, {}, [], set()
+    FakeAsync.ready_after = 1
+    yield
+
+
+def plan_async(conn, batch, prompts, params=None):
+    return [db.plan_run(conn, RunRequest(project="t", intent_id=f"i{i}", prompt_id=f"i{i}-0", prompt=p,
+                                         engine="gemini"), "fakeasync", batch_id=batch, params=params)
+            for i, p in enumerate(prompts)]
+
+
+def test_async_submit_then_poll(conn, fake_async):
+    b = db.create_batch(conn, "t", "async", {})
+    plan_async(conn, b, [PROMPT, PROMPT + " 2"])
+    out = tick(conn, CFG, "t", b)
+    assert out["submitted"] == 2 and out["pending"] == 2 and out["parsed"] == 0
+    assert db.batch_status(conn, b) == {"submitted": 2}
+    assert all(r["provider_task_id"] for r in conn.execute("SELECT * FROM run WHERE batch_id = ?", (b,)))
+    out = tick(conn, CFG, "t", b)
+    assert out["collected"] == 2 and out["parsed"] == 2
+    assert len(FakeAsync.submits) == 2                    # submitted once each, never again
+
+
+def test_sync_param_forces_blocking_call(conn, fake_async):
+    b = db.create_batch(conn, "t", "sync", {})
+    plan_async(conn, b, [PROMPT], params={"sync": True})
+    out = tick(conn, CFG, "t", b)
+    assert out["collected"] == 1 and FakeAsync.submits == []
+
+
+def test_async_crash_after_submit_does_not_pay_twice(conn, fake_async):
+    b = db.create_batch(conn, "t", "async-crash", {})
+    (rid,) = plan_async(conn, b, [PROMPT])
+    assert db.claim(conn, rid)
+    key = conn.execute("SELECT submit_key FROM run WHERE id = ?", (rid,)).fetchone()[0]
+    FakeAsync().submit(None, key)                         # provider accepted it, then our worker died
+    conn.execute("UPDATE run SET submitted_at = datetime('now', '-20 minutes') WHERE id = ?", (rid,))
+    conn.commit()
+    tick(conn, CFG, "t", b)                               # released -> re-submitted with the SAME key
+    tick(conn, CFG, "t", b)
+    assert db.batch_status(conn, b) == {"parsed": 1}
+    assert len(FakeAsync.tasks) == 1                      # one paid task, not two
+    assert set(FakeAsync.submits) == {key}
+
+
+def test_async_failed_task_retries_with_new_key(conn, fake_async):
+    b = db.create_batch(conn, "t", "async-fail", {})
+    plan_async(conn, b, [PROMPT])
+    FakeAsync.fail_tasks = {"task-1"}
+    FakeAsync.ready_after = 0
+    for _ in range(3):
+        tick(conn, CFG, "t", b)
+    assert db.batch_status(conn, b) == {"parsed": 1}
+    assert len(set(FakeAsync.submits)) == 2               # a failed task is retried as a new task

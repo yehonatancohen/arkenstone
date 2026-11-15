@@ -22,11 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from geo.core import db  # noqa: E402
 from geo.core.schema import RunRequest  # noqa: E402
-from geo.orchestrator.run import tick  # noqa: E402
+from geo.orchestrator.run import collect_planned, run_until_done  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-# cloro sync credits per call with our default flags (docs 2026-11-15)
-CREDITS = {"chatgpt": 9, "gemini": 6, "ai_mode": 6, "copilot": 6, "ai_overview": 7}
+# cloro credits per run with our default flags (docs 2026-11-15): async default, sync is +2
+CREDITS = {"chatgpt": 7, "gemini": 4, "ai_mode": 4, "copilot": 4, "ai_overview": 5}
 
 
 def report(conn, batch_ids: list[str], cfg: dict) -> None:
@@ -41,7 +41,8 @@ def report(conn, batch_ids: list[str], cfg: dict) -> None:
                 print(f"  [{r['status']}] {r['prompt'][:40]}  {r['error'] or ''}")
                 continue
             n = json.loads(r["normalized_json"])
-            raw_res = (json.loads(r["raw_json"]).get("result") or {})
+            raw = json.loads(r["raw_json"])
+            raw_res = (raw.get("result") if "result" in raw else raw.get("response")) or {}  # sync | async
             if r["engine"] == "ai_overview":
                 raw_res = raw_res.get("aioverview") or {}
             srcs = n.get("sources")
@@ -95,7 +96,7 @@ def main():
         iid, _, idx = spec.partition(":")
         chosen.append((iid, int(idx or 1), by_id[iid]["prompts"][int(idx or 1)]))
     params = json.loads(args.params)
-    total = sum(CREDITS.get(e, 0) for e in args.engines) * len(chosen)
+    total = sum(CREDITS.get(e, 0) + (2 if params.get("sync") else 0) for e in args.engines) * len(chosen)
     print(f"{len(chosen)} prompts x {len(args.engines)} engines = {len(chosen) * len(args.engines)} runs, "
           f"~{total} credits")
     for iid, idx, p in chosen:
@@ -113,9 +114,13 @@ def main():
                              country=cfg.get("country", "IL"), language=cfg.get("language", "he"))
             db.plan_run(conn, req, args.provider, intent_version=str(bank.get("version")), batch_id=b, params=params)
         batches.append(b)
-        out = tick(conn, cfg, args.project, b, workers=1, retry=False,
-                   progress=lambda row, err: print(f"  {row['engine']}: {'ok' if err is None else err}", flush=True))
-        print(f"{engine}: {out}", flush=True)
+    for b in batches:  # async: queue everything at cloro first, then collect
+        print(f"{b}: {collect_planned(conn, args.project, b)}", flush=True)
+    for b in batches:
+        out = run_until_done(conn, cfg, args.project, b, workers=1,
+                             progress=lambda row, err: print(f"  {row['engine']}: {'ok' if err is None else err}",
+                                                             flush=True))
+        print(f"{b}: {out}", flush=True)
     print("\nbatches:", " ".join(batches))
     report(conn, batches, cfg)
 

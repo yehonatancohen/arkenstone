@@ -28,6 +28,9 @@ from geo.core.schema import NormalizedResponse, ProviderError, Retrieved, RunReq
 from geo.parser.normalize import domain_of
 
 BASE = "https://api.cloro.dev/v1/monitor"
+ASYNC = "https://api.cloro.dev/v1/async/task"
+TASK_TYPE = {"chatgpt": "CHATGPT", "gemini": "GEMINI", "ai_mode": "AIMODE", "copilot": "BING_AIMODE",
+             "ai_overview": "GOOGLE"}
 ENGINE_PATH = {
     "chatgpt": "chatgpt",
     "gemini": "gemini",
@@ -83,16 +86,58 @@ class CloroAdapter:
             return r
         return r
 
+    def _error(self, r: httpx.Response) -> ProviderError:
+        try:
+            err = r.json().get("error", {})
+        except ValueError:
+            err = {}
+        return ProviderError(f"cloro {r.status_code} {err.get('code')}: {err.get('message') or r.text[:300]}",
+                             permanent=r.status_code in PERMANENT_STATUS and r.status_code != 404,
+                             status=r.status_code, code=err.get("code"))
+
+    # ---- async: 2 credits cheaper per run, queued server-side, results kept ~24 h ----
+    def submit(self, req: RunRequest, idempotency_key: str, **params) -> str:
+        """Queue one run; returns cloro's task id. Same key again returns the existing task (no double pay)."""
+        if not self.api_key:
+            raise ProviderError("CLORO_API_KEY is not set", permanent=True)
+        body = {"taskType": TASK_TYPE[req.engine], "payload": self.build_body(req, **params),
+                "idempotencyKey": f"arkenstone-{idempotency_key}"}
+        for attempt in range(4):
+            r = self.client.post(ASYNC, headers={"Authorization": f"Bearer {self.api_key}"}, json=body)
+            if r.status_code in (429, 503):
+                time.sleep(float(r.headers.get("Retry-After", 2 ** (attempt + 1))))
+                continue
+            break
+        if r.status_code == 200:
+            return r.json()["task"]["id"]
+        if r.status_code == 409:  # already submitted earlier (e.g. crash before we stored the id)
+            task_id = ((r.json().get("error") or {}).get("details") or {}).get("taskId")
+            if task_id:
+                return task_id
+        raise self._error(r)
+
+    def poll(self, task_id: str, req: RunRequest) -> NormalizedResponse | None:
+        """None while queued/processing; the response when COMPLETED; ProviderError when FAILED or gone."""
+        r = self.client.get(f"{ASYNC}/{task_id}", headers={"Authorization": f"Bearer {self.api_key}"})
+        if r.status_code == 404:
+            raise ProviderError(f"cloro task {task_id} not found (deleted after ~24 h?)", status=404, code="TASK_GONE")
+        if r.status_code != 200:
+            raise self._error(r)
+        payload = r.json()
+        status = (payload.get("task") or {}).get("status")
+        if status in ("QUEUED", "PROCESSING"):
+            return None
+        if status != "COMPLETED":
+            raise ProviderError(f"cloro task {task_id} {status}", code=status)
+        resp = self.normalize(req, payload)
+        resp.latency_ms = (payload.get("task") or {}).get("latencyMs")
+        resp.credits = (payload.get("credits") or {}).get("creditsCharged")
+        return resp
+
     def collect(self, req: RunRequest, **params) -> NormalizedResponse:
         r = self._post(ENGINE_PATH[req.engine], self.build_body(req, **params))
         if r.status_code != 200:
-            try:
-                err = r.json().get("error", {})
-            except ValueError:
-                err = {}
-            raise ProviderError(f"cloro {r.status_code} {err.get('code')}: {err.get('message') or r.text[:300]}",
-                                permanent=r.status_code in PERMANENT_STATUS, status=r.status_code,
-                                code=err.get("code"))
+            raise self._error(r)
         def to_int(h):
             v = r.headers.get(h)
             return int(v) if v and v.isdigit() else None
@@ -102,8 +147,9 @@ class CloroAdapter:
         return resp
 
     def normalize(self, req: RunRequest, payload: dict) -> NormalizedResponse:
-        """Payload -> NormalizedResponse. Pure: re-running it on stored raw_json rebuilds the same result."""
-        res = payload.get("result") or {}
+        """Payload -> NormalizedResponse. Pure: re-running it on stored raw_json rebuilds the same result.
+        Sync payloads carry the engine result in `result`, async task payloads in `response`."""
+        res = (payload.get("result") if "result" in payload else payload.get("response")) or {}
         if req.engine == "ai_overview":
             res = res.get("aioverview")  # None: Google showed no AI Overview for this query (a real outcome)
 
@@ -151,7 +197,7 @@ class CloroAdapter:
         forced = (e == "chatgpt" and req.web_search != "off") or e in SEARCH_BASED
         if forced or sources or extra.get("search_triggered"):
             triggered = True   # sources or the UI's own "searching" line imply a search ran
-        elif e == "gemini" and isinstance(stream, list) and stream and not extra.get("retrieved"):
+        elif e == "gemini" and isinstance(stream, list) and stream and extra.get("retrieved") == []:
             triggered = False  # full stream read: no search line, no sources, no URLs at all
         else:
             triggered = None

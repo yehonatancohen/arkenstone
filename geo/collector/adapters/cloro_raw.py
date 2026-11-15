@@ -95,8 +95,9 @@ def gemini(raw_stream: list | None) -> dict:
         elif location is None and len(n) < 50 and (m := LOCATION.match(n.strip())):
             location = n.strip()
     return {
+        # The whole stream was read, so no URLs in it means nothing was read (known empty), not unknown.
         "retrieved": [{"url": u, "title": None, "snippet": None, "pub_date": None, "source_name": None}
-                      for u in urls.values()] if urls else None,
+                      for u in urls.values()] if raw_stream else None,
         # The marker's absence is not proof of no search, but with no sources and no URLs at all it is
         # the best evidence available; record False only in that case.
         "search_triggered": searched,

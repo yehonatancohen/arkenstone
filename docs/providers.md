@@ -82,3 +82,15 @@ Notes:
   parties247 was read (positions 16-17) but not linked. Gemini read 9, showed 6, parties247 cited and named.
 - Size: ~140 KB (ChatGPT) and ~380 KB (Gemini) of raw per run. Fine for SQLite at V0 volumes.
 - The stream is undocumented UI traffic: extractors return "unknown" when the shape changes (tested).
+
+### 2026-11-15: async is the default
+`/v1/async/task` + poll, verified end to end: ChatGPT 7 credits, Gemini 4 (sync 9 / 6). Tasks queue at cloro,
+so concurrency limits do not block us; results kept ~24 h. The poll payload carries the engine result under
+`response` (not `result`), plus `task.latencyMs` and `credits.creditsCharged`. Same `idempotencyKey` again
+returns 409 with the existing `taskId`: we use it to never pay twice after a crash (tested).
+Use `{"sync": true}` in run params to force the blocking endpoint.
+
+Seen on parties247 "איפה יש מסיבות הלילה בתל אביב?": **ChatGPT's fan-out query was in English**
+("Tel Aviv nightlife parties events tonight ...") for a Hebrew question, so it read mostly English sites
+(happytlv, secrettelaviv). Gemini placed the user in אום אל-פחם this time (ירוחם, נתניה before):
+the proxy location varies per run and is a noise source to measure.

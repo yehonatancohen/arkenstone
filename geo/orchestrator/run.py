@@ -1,11 +1,15 @@
 """Orchestrator: moves runs through statuses. Every stage reads only its input status, so the loop is
 resumable and idempotent: run `tick()` again after any crash and it continues where it stopped.
 
-    planned -> (claim) submitted -> (provider call) collected -> (parse) parsed
-                                 \\-> failed -> retry_failed -> planned   (up to db.MAX_ATTEMPTS)
+    planned -> (claim) submitted -> collected -> (parse) parsed
+                                 `-> failed -> retry_failed -> planned   (up to db.MAX_ATTEMPTS)
 
+Two collection modes, chosen per run:
+- async (default when the adapter has submit/poll): submit stores the provider task id and leaves the run
+  in `submitted`; `poll_submitted` later moves it to collected. Cheaper on cloro, queued server-side.
+- sync (`{"sync": true}` in the run params, or an adapter without submit): one blocking call.
 Provider calls run in a thread pool (`workers`); all database writes happen on the calling thread,
-so SQLite never sees concurrent writers. Sync providers only for now; async submit/poll comes later.
+so SQLite never sees concurrent writers.
 """
 from __future__ import annotations
 
@@ -25,41 +29,96 @@ def _request(row) -> RunRequest:
                       language=row["language"], surface=row["surface"], web_search=row["web_search"])
 
 
-def _call(adapter, req: RunRequest, params: dict):
-    t0 = time.monotonic()
+def _params(row) -> tuple[dict, bool]:
+    """-> (adapter params, use_async)."""
+    params = json.loads(row["params_json"] or "{}")
+    sync = bool(params.pop("sync", False))
+    return params, not sync and hasattr(get_adapter(row["provider"]), "submit")
+
+
+def _guard(fn, *args, **kwargs):
     try:
-        resp = adapter.collect(req, **params) if params else adapter.collect(req)
-        if resp.latency_ms is None:
-            resp.latency_ms = int((time.monotonic() - t0) * 1000)
-        return resp, None
+        return fn(*args, **kwargs), None
     except Exception as e:  # noqa: BLE001 - every failure is recorded on the run, never lost
         return None, e
 
 
+def _call(adapter, req: RunRequest, params: dict):
+    t0 = time.monotonic()
+    resp, err = _guard(adapter.collect, req, **params)
+    if resp is not None and resp.latency_ms is None:
+        resp.latency_ms = int((time.monotonic() - t0) * 1000)
+    return resp, err
+
+
+def _fail(conn, row, err) -> None:
+    permanent = isinstance(err, ProviderError) and err.permanent
+    db.set_status(conn, row["id"], "failed", error=("[permanent] " if permanent else "") + repr(err)[:2000])
+
+
+def _store(conn, row, resp) -> None:
+    norm = {k: v for k, v in resp.to_dict().items() if k != "raw"}
+    db.set_status(conn, row["id"], "collected", raw_json=resp.raw, normalized_json=norm,
+                  collected_at=resp.collected_at, model=resp.model,
+                  latency_ms=resp.latency_ms, credits=resp.credits, error=None)
+
+
 def collect_planned(conn, project: str | None = None, batch_id: str | None = None,
                     workers: int = 1, limit: int | None = None, progress=None) -> dict[str, int]:
+    """Claim planned runs; sync runs are collected now, async runs are submitted (polled later)."""
     rows = db.runs_in(conn, "planned", project, batch_id)[: limit or None]
     claimed = [r for r in rows if db.claim(conn, r["id"])]
-    counts = {"collected": 0, "failed": 0}
+    counts = {"collected": 0, "submitted": 0, "failed": 0}
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = {}
         for row in claimed:
-            params = json.loads(row["params_json"] or "{}")
-            futures[pool.submit(_call, get_adapter(row["provider"]), _request(row), params)] = row
+            row = conn.execute("SELECT * FROM run WHERE id = ?", (row["id"],)).fetchone()  # fresh submit_key
+            params, use_async = _params(row)
+            adapter, req = get_adapter(row["provider"]), _request(row)
+            if use_async:
+                fut = pool.submit(_guard, adapter.submit, req, row["submit_key"], **params)
+            else:
+                fut = pool.submit(_call, adapter, req, params)
+            futures[fut] = (row, use_async)
+        for fut in as_completed(futures):
+            row, use_async = futures[fut]
+            out, err = fut.result()
+            if err is not None:
+                _fail(conn, row, err)
+                counts["failed"] += 1
+            elif use_async:
+                conn.execute("UPDATE run SET provider_task_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                             (out, row["id"]))
+                conn.commit()
+                counts["submitted"] += 1
+            else:
+                _store(conn, row, out)
+                counts["collected"] += 1
+            if progress:
+                progress(row, err)
+    return counts
+
+
+def poll_submitted(conn, project: str | None = None, batch_id: str | None = None,
+                   workers: int = 4, progress=None) -> dict[str, int]:
+    """Ask the provider about every submitted async run once. Pending runs stay `submitted`."""
+    rows = [r for r in db.runs_in(conn, "submitted", project, batch_id) if r["provider_task_id"]]
+    counts = {"collected": 0, "pending": 0, "failed": 0}
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(_guard, get_adapter(r["provider"]).poll, r["provider_task_id"], _request(r)): r
+                   for r in rows}
         for fut in as_completed(futures):
             row = futures[fut]
             resp, err = fut.result()
-            if err is None:
-                norm = {k: v for k, v in resp.to_dict().items() if k != "raw"}
-                db.set_status(conn, row["id"], "collected", raw_json=resp.raw, normalized_json=norm,
-                              collected_at=resp.collected_at, model=resp.model,
-                              latency_ms=resp.latency_ms, credits=resp.credits, error=None)
-                counts["collected"] += 1
-            else:
-                permanent = isinstance(err, ProviderError) and err.permanent
-                msg = ("[permanent] " if permanent else "") + repr(err)[:2000]
-                db.set_status(conn, row["id"], "failed", error=msg)
+            if err is not None:
+                _fail(conn, row, err)
                 counts["failed"] += 1
+            elif resp is None:
+                counts["pending"] += 1
+                continue
+            else:
+                _store(conn, row, resp)
+                counts["collected"] += 1
             if progress:
                 progress(row, err)
     return counts
@@ -130,11 +189,29 @@ def tick(conn, cfg: dict, project: str, batch_id: str | None = None, workers: in
     """One full pass of every stage. Safe to call repeatedly (cron / loop)."""
     released = db.release_stale(conn)
     collected = collect_planned(conn, project, batch_id, workers=workers, progress=progress)
+    polled = poll_submitted(conn, project, batch_id, workers=max(workers, 4), progress=progress)
     retried = 0
     if retry and (n := db.retry_failed(conn, batch_id)):
         retried = n
         more = collect_planned(conn, project, batch_id, workers=workers, progress=progress)
         collected = {k: collected[k] + more[k] for k in collected}
+    collected["collected"] += polled["collected"]
+    collected["failed"] += polled["failed"]
+    collected["pending"] = polled["pending"]
     entities = {cfg["name"]: cfg["aliases"], **{c["name"]: c["aliases"] for c in cfg.get("competitors", [])}}
     parsed = parse_collected(conn, cfg["domain"], entities, cfg["name"], project, batch_id)
     return {"released": released, **collected, "retried": retried, "parsed": parsed}
+
+
+def run_until_done(conn, cfg: dict, project: str, batch_id: str, workers: int = 1, poll_every: float = 10.0,
+                   max_wait: float = 3600.0, progress=None) -> dict[str, int]:
+    """Tick until nothing in the batch is planned or submitted (or max_wait). Safe to interrupt and rerun."""
+    t0 = time.monotonic()
+    while True:
+        tick(conn, cfg, project, batch_id, workers=workers, progress=progress)
+        status = db.batch_status(conn, batch_id)
+        if not status.get("planned") and not status.get("submitted"):
+            return status
+        if time.monotonic() - t0 > max_wait:
+            return status
+        time.sleep(poll_every)

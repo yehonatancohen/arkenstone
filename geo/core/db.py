@@ -107,6 +107,8 @@ RUN_COLUMNS = {
     "latency_ms": "INTEGER",
     "credits": "INTEGER",
     "params_json": "TEXT",  # provider-request options for this run (e.g. include flags), for reproducibility
+    "submit_key": "TEXT",   # idempotency key sent to async providers; kept across crash recovery so a
+                            # re-submit returns the existing task instead of paying twice
 }
 
 MAX_ATTEMPTS = 3
@@ -166,20 +168,26 @@ def claim(conn: sqlite3.Connection, run_id: str) -> bool:
     """planned -> submitted, atomically. False if another worker already took it."""
     cur = conn.execute(
         """UPDATE run SET status = 'submitted', attempts = attempts + 1,
+                          submit_key = COALESCE(submit_key, id || '-' || (attempts + 1)),
                           submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
            WHERE id = ? AND status = 'planned'""", (run_id,))
     conn.commit()
     return cur.rowcount == 1
 
 
-def release_stale(conn: sqlite3.Connection, minutes: int = 15) -> int:
-    """Runs left in `submitted` longer than `minutes` (worker died mid-call) go back to planned
-    (or to failed once out of attempts). A sync provider call never takes longer than ~5 minutes."""
+def release_stale(conn: sqlite3.Connection, minutes: int = 15, task_hours: int = 25) -> int:
+    """Runs stuck in `submitted` go back to planned (or failed once out of attempts):
+    - no task id after `minutes`: the worker died mid-call (a sync call never takes > ~5 min);
+    - a task id after `task_hours`: the provider has deleted the task (cloro keeps them ~24 h).
+    The submit_key is kept, so an async re-submit of a task that did get created is not paid twice."""
     cur = conn.execute(
         f"""UPDATE run SET status = CASE WHEN attempts >= ? THEN 'failed' ELSE 'planned' END,
+                           provider_task_id = NULL,
                            error = COALESCE(error, '') || ' [released: stuck in submitted]',
                            updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'submitted' AND submitted_at < datetime('now', '-{int(minutes)} minutes')""",
+            WHERE status = 'submitted' AND (
+                  (provider_task_id IS NULL AND submitted_at < datetime('now', '-{int(minutes)} minutes'))
+               OR (provider_task_id IS NOT NULL AND submitted_at < datetime('now', '-{int(task_hours)} hours')))""",
         (MAX_ATTEMPTS,))
     conn.commit()
     return cur.rowcount
@@ -187,7 +195,8 @@ def release_stale(conn: sqlite3.Connection, minutes: int = 15) -> int:
 
 def retry_failed(conn: sqlite3.Connection, batch_id: str | None = None) -> int:
     """failed -> planned for runs with attempts left and a retryable error."""
-    sql = """UPDATE run SET status = 'planned', updated_at = CURRENT_TIMESTAMP
+    sql = """UPDATE run SET status = 'planned', submit_key = NULL, provider_task_id = NULL,
+                            updated_at = CURRENT_TIMESTAMP
              WHERE status = 'failed' AND attempts < ? AND COALESCE(error, '') NOT LIKE '%[permanent]%'"""
     args: list = [MAX_ATTEMPTS]
     if batch_id:
