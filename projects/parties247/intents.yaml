@@ -1,0 +1,25 @@
+# Intent bank. Versioned: never edit a version that already has runs, bump `version` instead.
+# v1: small DRAFT set by Claude (2026-11-15) for provider exploration only. Variants: search, question, personal.
+version: 1
+intents:
+  - id: parties-tonight-tlv
+    category: recommend
+    weight: 3
+    prompts:
+      - "מסיבות הלילה בתל אביב"
+      - "איפה יש מסיבות הלילה בתל אביב?"
+      - "אנחנו חבורה של 4 בני 22 ורוצים לצאת הלילה בתל אביב, לאיזו מסיבה כדאי ללכת?"
+  - id: parties-weekend-israel
+    category: recommend
+    weight: 3
+    prompts:
+      - "מסיבות סוף השבוע"
+      - "איפה אפשר לראות את כל המסיבות של סוף השבוע בישראל?"
+      - "אני מחפש אתר שמרכז את כל המסיבות בסוף השבוע הקרוב, יש כזה?"
+  - id: rave-tickets
+    category: tool
+    weight: 2
+    prompts:
+      - "כרטיסים לרייב"
+      - "איפה קונים כרטיסים לרייבים ומסיבות טבע?"
+      - "שמעתי על רייב בסוף החודש בצפון, איפה אני יכול לקנות כרטיס?"

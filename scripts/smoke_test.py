@@ -22,20 +22,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from geo.core import db  # noqa: E402
 from geo.core.schema import RunRequest  # noqa: E402
 from geo.estimator.rates import runs_for_mde, wilson  # noqa: E402
-from geo.orchestrator.run import collect_planned, parse_collected  # noqa: E402
+from geo.orchestrator.run import tick  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 HEBREW = re.compile(r"[֐-׿]")
 
 
-def load_project(name: str):
+def load_project(name: str, intents_file: str = "intents.yaml"):
     pdir = ROOT / "projects" / name
     cfg = yaml.safe_load((pdir / "project.yaml").read_text(encoding="utf-8"))
-    intents = yaml.safe_load((pdir / "intents.yaml").read_text(encoding="utf-8"))
+    intents = yaml.safe_load((pdir / intents_file).read_text(encoding="utf-8"))
     return cfg, intents
 
 
-def plan(conn, project, cfg, intents, provider, engine, reps, limit):
+def plan(conn, project, cfg, intents, provider, engine, reps, limit, batch_id=None):
     n = 0
     for intent in intents["intents"]:
         for j, prompt in enumerate(intent["prompts"]):
@@ -45,13 +45,14 @@ def plan(conn, project, cfg, intents, provider, engine, reps, limit):
                 req = RunRequest(project=project, intent_id=intent["id"], prompt_id=f"{intent['id']}-{j}",
                                  prompt=prompt, engine=engine, country=cfg.get("country", "IL"),
                                  language=cfg.get("language", "he"))
-                db.plan_run(conn, req, provider, intent_version=str(intents.get("version")))
+                db.plan_run(conn, req, provider, intent_version=str(intents.get("version")), batch_id=batch_id)
                 n += 1
     return n
 
 
-def summarize(conn, project, cfg):
-    rows = conn.execute("SELECT * FROM run WHERE project = ? AND status IN ('parsed','failed')", (project,)).fetchall()
+def summarize(conn, project, cfg, batch_id):
+    rows = conn.execute("SELECT * FROM run WHERE project = ? AND batch_id = ? AND status IN ('parsed','failed')",
+                        (project, batch_id)).fetchall()
     parsed = [r for r in rows if r["status"] == "parsed"]
     failed = len(rows) - len(parsed)
     print(f"\nruns: {len(parsed)} parsed, {failed} failed")
@@ -84,6 +85,7 @@ def summarize(conn, project, cfg):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")  # Hebrew output on Windows consoles (cp1252 default)
     load_dotenv(ROOT / ".env")
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default="tachles-mashkanta")
@@ -92,10 +94,12 @@ def main():
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--limit", type=int, default=0, help="max prompt variants (0 = all)")
     ap.add_argument("--dry-check", action="store_true", help="one Hebrew prompt, print raw response keys")
-    ap.add_argument("--summary-only", action="store_true")
+    ap.add_argument("--summary-only", metavar="BATCH_ID", help="only print the summary of an existing batch")
+    ap.add_argument("--workers", type=int, default=1, help="parallel provider calls (cloro free plan: 1)")
+    ap.add_argument("--intents", default="intents.yaml", help="intent bank file in the project dir")
     args = ap.parse_args()
 
-    cfg, intents = load_project(args.project)
+    cfg, intents = load_project(args.project, args.intents)
     conn = db.connect(str(ROOT / "data" / "geo.db"))
 
     if args.dry_check:
@@ -110,13 +114,15 @@ def main():
         print((resp.answer_text or "")[:500])
         return
 
-    if not args.summary_only:
-        n = plan(conn, args.project, cfg, intents, args.provider, args.engine, args.reps, args.limit)
-        print(f"planned {n} runs")
-        print(f"collected {collect_planned(conn, args.project)}")
-        entities = {cfg["name"]: cfg["aliases"], **{c["name"]: c["aliases"] for c in cfg.get("competitors", [])}}
-        print(f"parsed {parse_collected(conn, cfg['domain'], entities, cfg['name'], args.project)}")
-    summarize(conn, args.project, cfg)
+    batch_id = args.summary_only
+    if not batch_id:
+        batch_id = db.create_batch(conn, args.project, "smoke", {
+            "provider": args.provider, "engine": args.engine, "reps": args.reps, "limit": args.limit,
+            "intents_file": args.intents, "intent_version": str(intents.get("version"))})
+        n = plan(conn, args.project, cfg, intents, args.provider, args.engine, args.reps, args.limit, batch_id)
+        print(f"batch {batch_id}: planned {n} runs")
+        print(tick(conn, cfg, args.project, batch_id, workers=args.workers))
+    summarize(conn, args.project, cfg, batch_id)
 
 
 if __name__ == "__main__":

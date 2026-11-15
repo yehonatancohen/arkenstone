@@ -2,5 +2,83 @@
 
 | Provider | Engines | IL + Hebrew | Search forced? | Fan-out queries | Model | Multi-turn | Price/result | Fail rate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cloro | | | yes (ChatGPT) | | | | | |
+| cloro | ChatGPT, Gemini, AI Mode, Bing Copilot Search, AI Overview | IL on all 5 (checked `/v1/countries`) | ChatGPT forced (can disable); Gemini natural; Google/Bing search-based | ChatGPT only (+2 credits), often empty | ChatGPT only, often null | ChatGPT only (`prompt` array, ≤5) | 6–9 credits sync, 4–7 async | see observations |
 | brightdata | | | natural (web_search_triggered) | | | additional_prompt | | |
+
+## cloro (docs read 2026-11-15, https://cloro.dev/docs)
+
+**What it is:** real logged-out browser sessions on each engine's consumer web UI, through a proxy in the
+requested country. No model choice anywhere. Logged-out = what an anonymous visitor sees, which may differ
+from a logged-in user's answers (personalization, model tier). This is a measurement-scope fact to keep in mind.
+
+**Engines and credits (sync; async is 2 cheaper)**
+
+| Our engine | Endpoint | Credits | Returns beyond text + sources |
+| --- | --- | --- | --- |
+| chatgpt | `/v1/monitor/chatgpt` | 7, 9 with `searchQueries` | searchQueries, model (often empty), footnote per source (inline or not), entities, map, shopping |
+| gemini | `/v1/monitor/gemini` | 6 | places, shopping. No searchQueries, no model |
+| ai_mode | `/v1/monitor/aimode` | 6 | `hl` language param, places, videos, shopping, ads |
+| copilot | `/v1/monitor/bing/aimode` | 6 | bing.com/copilotsearch, not the Copilot app |
+| ai_overview | `/v1/monitor/google` + `include.aioverview` | 7 | full Google SERP too; AIO missing = Google showed none (still charged) |
+
+Not available: Perplexity, Copilot app, Grok (discontinued), Claude, Meta AI, DeepSeek (login walls).
+
+**Plans:** free = 500 credits, concurrency 1. Lite $30/mo = 37,500 credits ($0.80 per 1k), concurrency 10.
+Hobby $100 = 250k credits. Credits expire each cycle. Only successful calls are charged.
+At Lite prices a ChatGPT run is ~$0.007, a Gemini/AI Mode run ~$0.005 (sync).
+
+**Limits:** concurrency per plan (N+1th call gets 429 at once, no queue). Sync calls up to 5 min; use a 300s+
+client timeout. Async: `/v1/async/task` (+ `/batch`, up to 500), poll or webhook; results kept 24h.
+
+**Known gaps:** ChatGPT `searchQueries` / `model` sometimes empty (mobile-web format; `legacy: true` may help).
+Gemini returns a short canned answer with no sources in <2% of calls (retry works ~60%).
+Source fields are `label` (title) and `description` (snippet), not `title`.
+
+## Observations (our runs)
+
+### 2026-11-15: first exploration (11 runs, 77 credits, all succeeded)
+2 prompts (`refinance-calculator:1` "יש מחשבון שבודק אם כדאי למחזר משכנתא?", `advisor-recommend:1`
+"מי יועץ המשכנתאות הכי טוב בישראל?") x 5 engines, country IL. Batches `explore-*` in `data/geo.db`.
+
+| Engine | Answer chars | Sources | Inline cites | Queries | Model | Latency | Credits |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| chatgpt (default) | 860–930 | 3–16 | 3 | not returned | null | 23–48 s | 9 |
+| chatgpt `legacy` | 924 | 31 | 2 | 1, Hebrew | gpt-6 | 36 s | 9 |
+| gemini | 2000–2170 | 0–11 | n/a | n/a | n/a | 35–58 s | 6 |
+| ai_mode | 1100–1360 | 3 | n/a | n/a | n/a | 12–14 s | 6 |
+| copilot (Bing) | 1800–2090 | 10–11 | n/a | n/a | n/a | 27–31 s | 6 |
+| ai_overview | 850–930 | 4 | n/a | n/a | n/a | 26–43 s | 7 |
+
+Findings:
+- Hebrew and IL work on all 5 engines; answers are in natural Hebrew.
+- **ChatGPT needs `legacy: true`** for model and search queries (now the adapter default). Without it the
+  +2 credits for searchQueries buy nothing. Legacy also lists ~2x the sources (used-but-not-linked ones).
+- ChatGPT fan-out: a single long Hebrew query, mixing the question with "בנק ישראל" and "2026".
+- Gemini answered the calculator question with **zero sources** (natural mode: no search, from memory),
+  but searched for the advisor question. So "search triggered" really varies there.
+- tachles-mashkanta: not cited and not named in any of the 11 answers.
+- Recurring domains across engines: themarker.com (every engine), midrag.co.il, moti.org.il, boi.org.il,
+  wisecard.co.il, supermarker.co.il, mashcantaman.co.il, bizreviews.co.il, mylist.co.il.
+- For "who is the best advisor" every engine refuses to name one person and points to review sites
+  (midrag, bizreviews) instead: the answer is a list of *sources of trust*, not of advisors.
+
+### 2026-11-15: what `rawResponse` adds (ChatGPT +0 on top of searchQueries, Gemini free)
+Now on by default for chatgpt and gemini. Extracted by `geo/collector/adapters/cloro_raw.py`.
+
+| Field | ChatGPT | Gemini | AI Mode / Copilot / AIO |
+| --- | --- | --- | --- |
+| pages read (retrieved), incl. not cited | yes, with title, snippet, publish date | yes, URLs only | no |
+| which were cited | yes (inline-linked) | yes (shown sources) | shown sources only |
+| fan-out queries | yes (documented field) | no | no |
+| model | yes (gpt-6) | yes, from UI text (3.5 Flash-Lite) | no |
+| search triggered | forced | yes, from the UI's "searching" line | always (search-based) |
+| engine-named entities | yes (`entities`) | no | no |
+| user location the engine assumed | no | yes (e.g. ירוחם, נתניה: varies per run) | no |
+
+Notes:
+- In ChatGPT legacy mode `sources` already lists every page used (with repeats); `footnote=false` marks the
+  ones linked in the text. "Cited" must mean linked, otherwise everything read looks cited.
+- Example (parties247, "where can I see all weekend parties"): ChatGPT read 19 pages, linked 5;
+  parties247 was read (positions 16-17) but not linked. Gemini read 9, showed 6, parties247 cited and named.
+- Size: ~140 KB (ChatGPT) and ~380 KB (Gemini) of raw per run. Fine for SQLite at V0 volumes.
+- The stream is undocumented UI traffic: extractors return "unknown" when the shape changes (tested).

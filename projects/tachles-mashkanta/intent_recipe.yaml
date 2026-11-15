@@ -1,0 +1,60 @@
+# Intent recipe: the brief an LLM generator (and a human) follows to build an intent bank.
+# The hand-written bank (intents.yaml) and the generated one are both built from THIS file,
+# so they can be compared category by category. Never show the hand-written bank to the generator.
+version: 2  # v2: sharper category boundaries and search style (counts unchanged from v1)
+total_intents: 20
+variants_per_intent: 3
+
+# How the 3 variants of one intent differ. Same need, different way of asking.
+variant_styles:
+  - id: search
+    description: >
+      Short noun phrase, the way people type into Google. 2-5 words, not a sentence, no verb in first person,
+      no question mark.
+    example: "מחשבון מחזור משכנתא"
+  - id: question
+    description: One full, natural question, as asked to ChatGPT. No personal details.
+    example: "איך יודעים אם שווה לעשות מחזור משכנתא?"
+  - id: personal
+    description: First person, with a concrete situation (numbers, life stage, what happened). 1-2 sentences.
+    example: "לקחתי משכנתא ב-2023 כשהריבית הייתה גבוהה, שווה לי למחזר עכשיו?"
+
+# Question types and how many intents of each. Counts must sum to total_intents.
+categories:
+  - id: recommend
+    count: 4
+    description: >
+      Asks the AI to NAME or point to specific providers: which advisor, company, site, app, bank or insurer
+      (words like מי / איזה / איפה / תמליץ / מומלץ / הכי טוב). These are the questions where a business can be
+      mentioned by name, so they matter most for mention rate. Not "how do I choose" (that is process) and
+      not "X or Y" (that is decide). Cover different kinds of providers, at most one about a calculator.
+    weight_hint: 3
+  - id: tool
+    count: 4
+    description: Wants to compute a specific number themselves, or looks for a calculator for it.
+    weight_hint: 3
+  - id: decide
+    count: 4
+    description: A choice between options ("X or Y", including advisor vs bank), or "is it worth it / should I".
+    weight_hint: 3
+  - id: cost
+    count: 3
+    description: Prices, fees, rates, how much something costs or what is normal.
+    weight_hint: 2
+  - id: process
+    count: 2
+    description: How to do something, steps, what comes next.
+    weight_hint: 2
+  - id: rules
+    count: 3
+    description: Eligibility, regulation, limits, who can and cannot.
+    weight_hint: 2
+
+# Hard rules for every prompt.
+rules:
+  - Written in natural Hebrew, as a real Israeli customer would write. Never transliterate.
+  - A clean customer question. Never ask the AI to list sources, sites it searched, or to explain itself.
+  - Never name the business being measured or its competitors inside the prompt.
+  - Each intent is a distinct customer need. No two intents should be rewordings of each other.
+  - Close to money for this business: a person asking it could plausibly use the business's product.
+  - Prices, rates and dates must be plausible for Israel now. Do not invent laws or programs.

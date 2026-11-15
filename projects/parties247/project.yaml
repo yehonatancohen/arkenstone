@@ -1,0 +1,19 @@
+# Project environment: parties247. Positive control: a site expected to appear in AI answers,
+# so a measurement that never finds it is suspect.
+name: Parties24/7
+domain: parties247.co.il
+aliases: ["Parties24/7", "Parties 24/7", "parties247", "פרטיז 24/7", "פארטיז 24/7"]
+country: IL
+language: he
+
+# DRAFT (Claude, 2026-11-15). TODO (owner): real competitors.
+competitors:
+  - name: "Go Out"
+    aliases: ["Go Out", "גו אאוט", "goout"]
+  - name: "Eventim"
+    aliases: ["Eventim", "איוונטים"]
+  - name: "Leaan"
+    aliases: ["Leaan", "לאן"]
+
+budget:
+  monthly_usd: 30

@@ -1,23 +1,152 @@
 # Intent bank. Versioned: never edit a version that already has runs, bump `version` instead.
-# DRAFT examples only — the owner replaces these with ~20 real intents, 3 variants each.
-# A good intent: something a real customer would ask an AI, specific, and close to money.
-version: 0-draft
+# v2: hand-written by Claude from intent_recipe.yaml v2 (2026-11-15; v1 had no runs). This is the reference set the
+# Gemini generator is compared against. Variant order follows the recipe: search, question, personal.
+version: 2
+recipe_version: 2
 intents:
-  - id: refinance-worth-it
-    weight: 3            # business weight 1-3: how close to money
-    prompts:
-      - "האם כדאי לי למחזר משכנתא עכשיו?"
-      - "איך יודעים אם שווה לעשות מחזור משכנתא?"
-      - "מחזור משכנתא 2026 - שווה את זה?"
-  - id: refinance-calculator
+  # --- recommend (4) ---
+  - id: advisor-recommend
+    category: recommend
     weight: 3
     prompts:
-      - "יש מחשבון שבודק אם כדאי למחזר משכנתא?"
-      - "מחשבון מחזור משכנתא אונליין"
-      - "איך לחשב כמה אחסוך ממחזור משכנתא"
-  - id: mortgage-advisor-recommendation
+      - "יועץ משכנתאות מומלץ"
+      - "מי יועץ המשכנתאות הכי טוב בישראל?"
+      - "אני קונה דירה ראשונה ומחפש יועץ משכנתאות אמין, את מי אתה ממליץ?"
+  - id: refinance-service-recommend
+    category: recommend
+    weight: 3
+    prompts:
+      - "חברה למחזור משכנתא מומלצת"
+      - "דרך מי הכי כדאי לעשות מחזור משכנתא?"
+      - "יש לי משכנתא של 900 אלף שקל ואני רוצה למחזר אותה, למי כדאי לפנות?"
+  - id: mortgage-info-site
+    category: recommend
     weight: 2
     prompts:
-      - "איך בוחרים יועץ משכנתאות טוב?"
-      - "האם צריך יועץ משכנתאות למחזור?"
-      - "כמה עולה יועץ משכנתאות ושווה את זה?"
+      - "אתר מידע על משכנתאות"
+      - "איפה אפשר ללמוד על משכנתאות בצורה פשוטה ואמינה?"
+      - "אני מתחיל לחפש משכנתא ולא מבין כלום, איפה אפשר לקרוא הסברים בלי שינסו למכור לי משהו?"
+  - id: offer-compare
+    category: recommend
+    weight: 3
+    prompts:
+      - "השוואת הצעות משכנתא"
+      - "איפה אפשר להשוות הצעות משכנתא מכמה בנקים במקום אחד?"
+      - "קיבלתי אישור עקרוני משני בנקים, איזה אתר או שירות יכול להשוות לי בין ההצעות?"
+  # --- tool (4) ---
+  - id: refinance-calculator
+    category: tool
+    weight: 3
+    prompts:
+      - "מחשבון מחזור משכנתא"
+      - "יש מחשבון שבודק אם כדאי למחזר משכנתא?"
+      - "אני רוצה לבדוק לבד כמה אחסוך אם אמחזר את המשכנתא, באיזה מחשבון כדאי להשתמש?"
+  - id: payment-calculator
+    category: tool
+    weight: 2
+    prompts:
+      - "מחשבון החזר חודשי משכנתא"
+      - "איך מחשבים את ההחזר החודשי על משכנתא?"
+      - "אם אקח משכנתא של מיליון שקל ל-25 שנה, כמה אשלם בחודש?"
+  - id: eligibility-calculator
+    category: tool
+    weight: 3
+    prompts:
+      - "מחשבון כמה משכנתא אפשר לקבל"
+      - "איך יודעים כמה משכנתא הבנק יאשר לי?"
+      - "אנחנו זוג עם הכנסה של 25 אלף נטו בחודש, כמה משכנתא נוכל לקבל?"
+  - id: early-repayment-calculator
+    category: tool
+    weight: 3
+    prompts:
+      - "חישוב עמלת פירעון מוקדם משכנתא"
+      - "איך מחשבים כמה עמלה אשלם על פירעון מוקדם של משכנתא?"
+      - "קיבלתי ירושה ואני רוצה להחזיר 200 אלף מהמשכנתא, איך אני יודע כמה עמלה זה יעלה לי?"
+  # --- decide (4) ---
+  - id: refinance-worth-it
+    category: decide
+    weight: 3
+    prompts:
+      - "האם כדאי למחזר משכנתא עכשיו"
+      - "איך יודעים אם שווה לעשות מחזור משכנתא?"
+      - "לקחתי משכנתא ב-2023 כשהריבית הייתה גבוהה, שווה לי למחזר עכשיו?"
+  - id: prime-vs-fixed
+    category: decide
+    weight: 2
+    prompts:
+      - "פריים או קבועה לא צמודה"
+      - "מה עדיף במשכנתא, מסלול פריים או ריבית קבועה?"
+      - "אני מתלבט כמה מהמשכנתא לשים בפריים, מה נכון לעשות היום?"
+  - id: advisor-vs-bank
+    category: decide
+    weight: 3
+    prompts:
+      - "יועץ משכנתאות או ישר לבנק"
+      - "האם באמת צריך יועץ משכנתאות או שאפשר להסתדר לבד מול הבנק?"
+      - "הבנק שלי כבר נתן לי הצעה, שווה לשלם ליועץ או פשוט לחתום?"
+  - id: mortgage-mix
+    category: decide
+    weight: 2
+    prompts:
+      - "תמהיל משכנתא מומלץ"
+      - "מה התמהיל הכי טוב למשכנתא היום?"
+      - "קיבלתי מהבנק הצעת תמהיל עם שליש פריים ושליש צמודה, איך אני בודק אם זה טוב?"
+  # --- cost (3) ---
+  - id: advisor-cost
+    category: cost
+    weight: 2
+    prompts:
+      - "כמה עולה יועץ משכנתאות"
+      - "כמה גובה יועץ משכנתאות בממוצע, וזה שווה את הכסף?"
+      - "יועץ משכנתאות ביקש ממני 8,000 שקל על מחזור, זה מחיר סביר?"
+  - id: current-rates
+    category: cost
+    weight: 2
+    prompts:
+      - "ריבית משכנתא היום"
+      - "מה הריבית הממוצעת על משכנתא בישראל עכשיו?"
+      - "הציעו לי ריבית קבועה לא צמודה של 4.5%, זה טוב ביחס לשוק?"
+  - id: purchase-costs
+    category: cost
+    weight: 2
+    prompts:
+      - "עלויות נלוות לקניית דירה"
+      - "כמה כסף צריך בנוסף למחיר הדירה, כולל מס רכישה ועורך דין?"
+      - "אנחנו קונים דירה ב-2.4 מיליון ויש לנו 700 אלף, זה יספיק לכל ההוצאות?"
+  # --- process (2) ---
+  - id: refinance-process
+    category: process
+    weight: 2
+    prompts:
+      - "תהליך מחזור משכנתא שלב אחר שלב"
+      - "מה השלבים לעשות מחזור משכנתא?"
+      - "החלטתי למחזר את המשכנתא, מה אני צריך לעשות ובאיזה סדר?"
+  - id: first-mortgage-steps
+    category: process
+    weight: 2
+    prompts:
+      - "איך לוקחים משכנתא ראשונה"
+      - "מה צריך לעשות כדי לקבל משכנתא לדירה ראשונה?"
+      - "חתמנו על זיכרון דברים לדירה, מה הצעד הבא מול הבנקים?"
+  # --- rules (3) ---
+  - id: down-payment-ltv
+    category: rules
+    weight: 2
+    prompts:
+      - "כמה הון עצמי צריך למשכנתא"
+      - "מה אחוז המימון המקסימלי למשכנתא בישראל?"
+      - "יש לנו 300 אלף שקל הון עצמי, על איזה מחיר דירה אנחנו יכולים לחשוב?"
+  - id: refinance-eligibility
+    category: rules
+    weight: 3
+    prompts:
+      - "תנאים למחזור משכנתא"
+      - "האם כל אחד יכול למחזר משכנתא, ומה התנאים?"
+      - "היו לי חזרות של צ'קים לפני שנה, יאשרו לי מחזור משכנתא?"
+  - id: investment-property
+    category: rules
+    weight: 2
+    prompts:
+      - "משכנתא לדירה להשקעה"
+      - "מה ההבדל בין משכנתא לדירה ראשונה למשכנתא לדירה להשקעה?"
+      - "יש לי כבר דירה ואני רוצה לקנות עוד אחת להשקעה, כמה משכנתא אקבל?"

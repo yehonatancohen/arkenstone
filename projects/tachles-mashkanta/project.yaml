@@ -1,14 +1,23 @@
 # Project environment: tachles-mashkanta. Generic code reads this; it never hardcodes a project.
 name: תכלס משכנתא
 domain: tachles-mashkanta.co.il
-aliases: ["תכלס משכנתא", "tachles mashkanta", "tachles-mashkanta"]
+aliases: ["תכל'ס משכנתא", "תכל׳ס משכנתא", "תכלס משכנתא", "tachles mashkanta", "tachles-mashkanta"]
 country: IL
 language: he
 
-# TODO (owner): fill real competitors (advisors, calculators, banks' calculators, comparison sites)
+# DRAFT (Claude, 2026-11-15): banks and info sites likely to be named in answers.
+# TODO (owner): add real advisor firms and comparison/calculator sites you compete with.
 competitors:
-  - name: "TODO competitor"
-    aliases: ["TODO"]
+  - name: "מזרחי טפחות"
+    aliases: ["מזרחי טפחות", "טפחות", "mizrahi tefahot"]
+  - name: "בנק הפועלים"
+    aliases: ["בנק הפועלים", "הפועלים", "bank hapoalim"]
+  - name: "בנק לאומי"
+    aliases: ["בנק לאומי", "leumi"]   # not bare "לאומי": would match "ביטוח לאומי"
+  - name: "בנק דיסקונט"
+    aliases: ["בנק דיסקונט", "דיסקונט", "discount bank"]
+  - name: "כל זכות"
+    aliases: ["כל זכות", "kolzchut"]
 
 connectors:
   gsc_property: "sc-domain:tachles-mashkanta.co.il"   # VERIFY
