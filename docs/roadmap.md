@@ -22,7 +22,8 @@ in citation/mention rate for Hebrew questions, and at what monthly cost?
 For each provider record in `docs/providers.md`:
 - engines, Israel/Hebrew support, is web search forced or natural, returns fan-out queries?,
   returns model?, multi-turn support?, price per result, latency, failure rate.
-- [ ] Implement `brightdata` adapter (it reports `web_search_triggered`, natural mode)
+- [x] Implement `brightdata` adapter (it reports `web_search_triggered`, natural mode)
+- [ ] Owner: replace `BRIGHTDATA_API_KEY` in `.env` (currently a copy of the Gemini key), then run the 4-prompt ChatGPT comparison (`scripts/brightdata_compare.py`)
 - [ ] Run the same 20 prompts on both providers; compare overlap of cited domains
 - Done when: the table is filled for 2 providers.
 

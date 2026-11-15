@@ -3,7 +3,7 @@
 | Provider | Engines | IL + Hebrew | Search forced? | Fan-out queries | Model | Multi-turn | Price/result | Fail rate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | cloro | ChatGPT, Gemini, AI Mode, Bing Copilot Search, AI Overview | IL on all 5 (checked `/v1/countries`) | ChatGPT forced (can disable); Gemini natural; Google/Bing search-based | ChatGPT only (+2 credits), often empty | ChatGPT only, often null | ChatGPT only (`prompt` array, ≤5) | 6–9 credits sync, 4–7 async | see observations |
-| brightdata | | | natural (web_search_triggered) | | | additional_prompt | | |
+| brightdata | ChatGPT, Gemini, AI Mode (Perplexity + Grok documented unavailable, Copilot undocumented) | not tested (key blocker); country list not published | ChatGPT natural (`web_search` is a permission; `web_search_triggered` reports it) | ChatGPT only (`web_search_query`) | ChatGPT, Gemini (`model`) | additional_prompt (not used: rule 5) | $1.5/1k records PAYG (generic Web Scraper API) | not tested |
 
 ## cloro (docs read 2026-11-15, https://cloro.dev/docs)
 
@@ -94,3 +94,41 @@ Seen on parties247 "איפה יש מסיבות הלילה בתל אביב?": **C
 ("Tel Aviv nightlife parties events tonight ...") for a Hebrew question, so it read mostly English sites
 (happytlv, secrettelaviv). Gemini placed the user in אום אל-פחם this time (ירוחם, נתניה before):
 the proxy location varies per run and is a noise source to measure.
+
+## Bright Data (docs read 2026-11-15, docs.brightdata.com; adapter `geo/collector/adapters/brightdata.py`)
+
+**Engines:** ChatGPT Search `gd_m7aof0k82r803d5bjm`, Gemini `gd_mbz66arm2mf9cu856y`, Google AI Mode
+`gd_mcswdt6z2elth3zqr2`. Perplexity and Grok: "currently unavailable" in the docs. Copilot: not documented.
+So Bright Data covers no engine that cloro lacks today.
+
+**Fields (per-scraper JSON; item shapes not documented, the two example pages disagree):**
+
+| Field | ChatGPT | Gemini | AI Mode |
+| --- | --- | --- | --- |
+| answer text / markdown / raw | yes | yes | yes |
+| citations, links_attached | yes | yes | yes (+ citations_mapping) |
+| pages read (search_sources, _more) | yes | no | no |
+| fan-out queries (web_search_query) | yes | no | no |
+| web_search_triggered | yes (natural mode) | no | n/a (search-based) |
+| model | yes (example shows null or gpt-4o) | yes | no |
+| response_raw | yes | yes | no |
+| logged-in or logged-out UI | unknown | unknown | unknown |
+
+Our mapping (an assumption, check on the first real records): retrieved = search_sources + search_sources_more +
+shown; cited = in citations or links_attached.
+
+**Calls:** async `POST /datasets/v3/trigger?dataset_id=..&include_errors=true` with all prompts in `input[]`
+(`index` maps record to run, prompt as fallback) -> snapshot_id; `GET /datasets/v3/snapshot/{id}` (202 = building).
+Sync `/scrape` has a 1 min limit then returns 202. Every call is logged to `data/brightdata_calls.jsonl` and refused
+past `BRIGHTDATA_MAX_CALLS` (default 12). Raw snapshots kept untouched in `data/brightdata_raw/`.
+Script: `scripts/brightdata_compare.py status|trigger --engine X|collect|ledger`.
+
+**Free tier:** 5,000 credits/month, no card. The ChatGPT page says "up to 5,000 ChatGPT records". The Gemini and
+AI Mode pages do not state free coverage (only "Web Scraper API" generically). Without deposited funds requests error,
+no charge ("hard stop"). Account API: `GET /customer/balance`, `GET /trials/free_tier` (key needs billing.read).
+
+### 2026-11-15: first attempt blocked
+3 calls, all 401 "Auth method is not supported" (balance, free_tier, ChatGPT trigger). Cause: `BRIGHTDATA_API_KEY`
+in `.env` holds the same value as `GEMINI_API_KEY`, i.e. not a Bright Data key. Nothing delivered, nothing charged.
+The 4 ChatGPT runs are stored as failed (batches `bd-chatgpt-*`). Next: paste the real API key (control panel,
+Account settings -> API key; give it billing.read too so usage can be checked), then `trigger --engine chatgpt`.
