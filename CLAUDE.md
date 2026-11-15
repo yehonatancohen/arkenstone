@@ -42,6 +42,9 @@ The task list is in `docs/roadmap.md`. Start there.
    "tell me which sites you searched" to a measured prompt. Such probes are a separate run type.
 6. Intent banks are versioned. Never edit a version that already has runs; create a new one.
 7. Changing provider is a break in the series: run old and new in parallel for a few days first.
+8. Keep the visibility stages apart, never merge them: searched → site read (retrieved) → site cited
+   (linked) → site named. "Read but not cited" is its own outcome. Where an engine does not expose what it
+   read, report "read: unknown", never assume.
 
 ## Conventions
 
