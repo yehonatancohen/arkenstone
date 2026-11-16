@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,38 @@ def calls_used() -> int:
     return sum(1 for line in p.read_text(encoding="utf-8").splitlines() if line.strip()) if p.exists() else 0
 
 
+def paid_calls() -> int:
+    """POST calls (trigger/scrape) = records requested. Polls and downloads are free and not capped."""
+    p = ledger_path()
+    if not p.exists():
+        return 0
+    return sum(1 for line in p.read_text(encoding="utf-8").splitlines() if '"method": "POST"' in line)
+
+
+def read_domains(response_raw) -> list[str] | None:
+    """ChatGPT v2 stream: the 'Searched N websites' activity carries one favicon per site read.
+    Verified 2026-11-15 on 11 records: icon count == N every time (up to 14). Site level only, not pages.
+    None = stream absent or no search activity found (unknown); [] is never returned for 'absent'."""
+    if not isinstance(response_raw, str) or not response_raw.startswith("["):
+        return None
+    try:
+        events = json.loads(response_raw)
+    except ValueError:
+        return None
+    found, seen = False, []
+    for e in events if isinstance(events, list) else []:
+        if not isinstance(e, dict) or e.get("type") != "reasoning":
+            continue
+        s = json.dumps(e)
+        if re.search(r"Searched \d+ (?:websites|sites)", s):
+            found = True
+        for d in re.findall(r"favicons\?domain=([^&\"\\]+)", s):
+            d = d.lower().removeprefix("https://").removeprefix("http://").removeprefix("www.")
+            if d not in seen:
+                seen.append(d)
+    return seen if found else None
+
+
 class BrightDataAdapter:
     name = "brightdata"
     engines = set(DATASET)
@@ -76,10 +109,10 @@ class BrightDataAdapter:
     def _http(self, method: str, path: str, **kw) -> httpx.Response:
         if not self.api_key:
             raise ProviderError("BRIGHTDATA_API_KEY is not set", permanent=True)
-        cap = int(os.getenv("BRIGHTDATA_MAX_CALLS", "12"))
+        cap = int(os.getenv("BRIGHTDATA_MAX_CALLS", "3000"))
         used = calls_used()
-        if used >= cap:
-            raise BudgetExceeded(used, cap)
+        if method == "POST" and paid_calls() >= cap:
+            raise BudgetExceeded(paid_calls(), cap)
         t0 = time.monotonic()
         entry = {"n": used + 1, "at": datetime.now(timezone.utc).isoformat(), "method": method, "path": path,
                  "params": kw.get("params")}
@@ -113,9 +146,9 @@ class BrightDataAdapter:
     # ---- collection ----
     def input_for(self, req: RunRequest, index: int) -> dict:
         """Clean prompt only (rule 5): no additional_prompt, no require_sources."""
-        item = {"url": START_URL[req.engine], "prompt": req.prompt, "country": req.country.lower(), "index": index}
-        if req.engine == "chatgpt":
-            item["web_search"] = req.web_search != "off"
+        item = {"url": START_URL[req.engine], "prompt": req.prompt, "country": req.country.upper(), "index": index}  # "il" is rejected, "IL" works
+        if req.engine == "chatgpt" and req.web_search == "off":
+            item["web_search"] = False  # otherwise not sent: ChatGPT decides (natural mode)
         if req.engine == "ai_mode":
             item["hl"] = req.language
         return item
@@ -132,6 +165,11 @@ class BrightDataAdapter:
         if r.status_code != 200:
             raise self._error(r, "trigger")
         return r.json()["snapshot_id"]
+
+    def submit(self, req: RunRequest, idempotency_key: str, **params) -> str:
+        """Pipeline async path: one snapshot per run. No idempotency key at Bright Data: a crash between
+        trigger and storing the task id can pay for one extra record (rare, bounded by MAX_ATTEMPTS)."""
+        return self.trigger([req]) + "#1"
 
     def download(self, snapshot_id: str, min_gap: float = 60.0) -> list | None:
         """Records of a snapshot, or None while it is still building. Cached per process."""
@@ -220,6 +258,17 @@ class BrightDataAdapter:
                 retrieved.append(Retrieved(url=x["url"], domain=domain_of(x["url"]), position=len(retrieved) + 1,
                                            cited=x["url"] in shown, title=title(x),
                                            snippet=x.get("snippet") or x.get("description")))
+
+        if e == "chatgpt" and retrieved is None:
+            doms = read_domains(rec.get("response_raw"))
+            if doms is not None:
+                shown_d = {domain_of(x["url"]) for x in shown_raw}
+                retrieved = [Retrieved(url=f"https://{d}/", domain=domain_of(f"https://{d}/"), position=i + 1,
+                                       cited=domain_of(f"https://{d}/") in shown_d, title=None, snippet=None)
+                             for i, d in enumerate(doms)]
+                for d in sorted(shown_d - {r.domain for r in retrieved}):  # shown = read, even if no icon
+                    retrieved.append(Retrieved(url=f"https://{d}/", domain=d, position=len(retrieved) + 1,
+                                               cited=True, title=None, snippet=None))
 
         queries = rec.get("web_search_query")
         if isinstance(queries, str):

@@ -17,3 +17,7 @@ competitors:
 
 budget:
   monthly_usd: 30
+
+# DRAFT (Claude, 2026-11-15): big sites that DO appear in answers (seen in provider tests). Calibration measures noise
+# on them too, since our site is often 0. The calibration report also adds the top domains it sees by itself.
+competitor_domains: ["go-out.co", "happytlv.com", "secrettelaviv.com", "tickchak.co.il", "timeout.com"]

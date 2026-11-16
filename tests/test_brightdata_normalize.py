@@ -1,6 +1,8 @@
 """Bright Data record -> NormalizedResponse, on records shaped like the documented example (2026-11-15)."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from geo.collector.adapters import brightdata
@@ -43,12 +45,13 @@ def test_unknowns_stay_none():
 
 def test_budget_refuses(tmp_path, monkeypatch):
     led = tmp_path / "calls.jsonl"
-    led.write_text('{"n":1}\n{"n":2}\n', encoding="utf-8")
+    led.write_text('{"n": 1, "method": "POST"}\n{"n": 2, "method": "POST"}\n{"n": 3, "method": "GET"}\n',
+                   encoding="utf-8")
     monkeypatch.setenv("BRIGHTDATA_LEDGER", str(led))
     monkeypatch.setenv("BRIGHTDATA_MAX_CALLS", "2")
     with pytest.raises(BudgetExceeded):
-        BrightDataAdapter(api_key="x").account_status()
-    assert brightdata.calls_used() == 2
+        BrightDataAdapter(api_key="x").trigger([req("chatgpt")])
+    assert brightdata.paid_calls() == 2 and brightdata.calls_used() == 3
 
 
 def test_poll_maps_index_and_downloads_once(monkeypatch):
@@ -70,3 +73,22 @@ def test_poll_maps_index_and_downloads_once(monkeypatch):
     with pytest.raises(Exception):
         a.poll("sd_1#2", req("chatgpt"))
     assert calls == ["/datasets/v3/snapshot/sd_1"]
+
+
+STREAM = json.dumps([
+    {"type": "reasoning", "status": {"text": "Searching the web", "toolIcons": ["globe"]}},
+    {"type": "reasoning", "activity": {"records": [{"kind": "activity", "text": "Searched 3 websites", "toolIcons": [
+        "https://www.google.com/s2/favicons?domain=www.a.co.il&sz=128",
+        "https://www.google.com/s2/favicons?domain=c.co.il&sz=128",
+        "https://www.google.com/s2/favicons?domain=www.e.co.il&sz=128"]}]}},
+    {"type": "content", "v": "x"}])
+
+
+def test_read_domains_from_stream_favicons():
+    assert brightdata.read_domains(STREAM) == ["a.co.il", "c.co.il", "e.co.il"]
+    assert brightdata.read_domains(None) is None
+    assert brightdata.read_domains(json.dumps([{"type": "content"}])) is None   # no search activity: unknown
+    rec = {"answer_text": "x", "web_search_triggered": True, "search_sources": None, "response_raw": STREAM,
+           "citations": [{"url": "https://www.a.co.il/p", "title": "A"}], "links_attached": []}
+    n = BrightDataAdapter(api_key="x").normalize(req("chatgpt"), rec)
+    assert [(r.domain, r.cited) for r in n.retrieved] == [("a.co.il", True), ("c.co.il", False), ("e.co.il", False)]

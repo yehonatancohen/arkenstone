@@ -26,3 +26,7 @@ connectors:
 
 budget:
   monthly_usd: 30
+
+# DRAFT (Claude, 2026-11-15): big sites that DO appear in answers (seen in provider tests). Calibration measures noise
+# on them too, since our site is almost always 0. The calibration report also adds the top domains it sees by itself.
+competitor_domains: ["themarker.com", "supermarker.co.il", "boi.org.il", "kolzchut.org.il", "my-mashkanta.co.il", "mashkantes.co.il"]
